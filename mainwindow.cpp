@@ -12,7 +12,12 @@
 #include <QDirIterator>
 #include <QXmlStreamReader>
 
-static const QString k_program = "./atbackend/atprogram.exe";
+static const QString k_programName = "atprogram.exe";
+
+static const QStringList k_searchDirs = QStringList()
+        << "./atbackend/"
+        << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/"
+        << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/";
 
 static const QStringList k_programmers = QStringList()
         << "avrdragon"
@@ -48,50 +53,73 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow),
     m_running(false),
     m_showPfileWarning(true),
-    m_process(nullptr)
+    m_process(new QProcess(this))
 {
     ui->setupUi(this);
     ui->programmerComboBox->addItems(k_programmers);
     ui->interfaceComboBox->addItems(k_interfaces);
 
-    QStringList targetList;
-    QDirIterator it("./packs", QStringList() << "package.content", QDir::NoFilter, QDirIterator::Subdirectories);
-    while (it.hasNext())
+    //Used to "selectAll" on focus in event
+    ui->lowFuseEdit->installEventFilter(this);
+    ui->highFuseEdit->installEventFilter(this);
+    ui->extFuseEdit->installEventFilter(this);
+
+    bool found = false;
+    QFileInfo atprogram;
+    foreach (const QString dir, k_searchDirs)
     {
-        using namespace tinyxml2;
-        XMLDocument doc;
-        std::string fileName = it.next().toStdString();
-        if (doc.LoadFile(fileName.c_str()) == XML_SUCCESS)
+        atprogram = QFileInfo(dir + k_programName);
+        if (atprogram.exists() && atprogram.isFile())
         {
-            XMLElement *e = nullptr;
-            if ((e = doc.FirstChildElement("package")))
+            ui->statusBar->showMessage(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
+            found = true;
+            break;
+        }
+    }
+
+    if (found)
+    {
+
+        QStringList targetList;
+        QString packsDir = atprogram.canonicalPath() + "/../packs";
+        QDirIterator it(packsDir, QStringList() << "package.content", QDir::NoFilter, QDirIterator::Subdirectories);
+        while (it.hasNext())
+        {
+            // QXmlStreamReader didn't like the ASCII encoding used in the package.content files
+            using namespace tinyxml2;
+            XMLDocument doc;
+            std::string fileName = it.next().toStdString();
+            if (doc.LoadFile(fileName.c_str()) == XML_SUCCESS)
             {
-                if ((e = e->FirstChildElement("content")))
+                XMLElement *e = nullptr;
+                if ((e = doc.FirstChildElement("package")))
                 {
-                    for (e = e->FirstChildElement("resources"); e; e = e->NextSiblingElement("resources"))
+                    if ((e = e->FirstChildElement("content")))
                     {
-                        QString attr(e->Attribute("target"));
-                        if (!attr.isEmpty())
+                        for (e = e->FirstChildElement("resources"); e; e = e->NextSiblingElement("resources"))
                         {
-                            targetList.append(attr);
-                            ui->targetComboBox->addItem(attr);
+                            QString attr(e->Attribute("target"));
+                            if (!attr.isEmpty())
+                            {
+                                targetList.append(attr);
+                                ui->targetComboBox->addItem(attr);
+                            }
                         }
                     }
                 }
             }
         }
+
+        QCompleter *completer = new QCompleter(targetList, this);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        ui->targetComboBox->setCompleter(completer);
+
+        m_process->setProgram(atprogram.canonicalFilePath());
+        m_process->setProcessChannelMode(QProcess::MergedChannels);
+        connect(m_process, &QProcess::readyRead, this, &MainWindow::on_readyRead);
+        connect(m_process, &QProcess::errorOccurred, this, &MainWindow::on_error);
+        connect(m_process, QOverload<int>::of(&QProcess::finished), this, &MainWindow::on_processFinished);
     }
-
-    QCompleter *completer = new QCompleter(targetList, this);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    ui->targetComboBox->setCompleter(completer);
-
-    m_process = new QProcess(this);
-    m_process->setProgram(k_program);
-    m_process->setProcessChannelMode(QProcess::MergedChannels);
-    connect(m_process, &QProcess::readyRead, this, &MainWindow::on_readyRead);
-    connect(m_process, &QProcess::errorOccurred, this, &MainWindow::on_error);
-    connect(m_process, QOverload<int>::of(&QProcess::finished), this, &MainWindow::on_processFinished);
 
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
                        "RuggedScience", "atprogram-gui");
@@ -121,6 +149,20 @@ void MainWindow::closeEvent(QCloseEvent *)
     settings.setValue("interface", ui->interfaceComboBox->currentText());
     settings.setValue("target", ui->targetComboBox->currentText());
 
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == ui->lowFuseEdit || obj == ui->highFuseEdit || obj == ui->extFuseEdit)
+    {
+        if (event->type() == QEvent::FocusIn)
+        {
+            QLineEdit *le = qobject_cast<QLineEdit *>(obj);
+            QTimer::singleShot(0, le, SLOT(selectAll()));
+        }
+    }
+
+    return QObject::eventFilter(obj, event);
 }
 
 void MainWindow::on_readyRead()
@@ -160,29 +202,41 @@ void MainWindow::on_processFinished(int exitCode)
 
 void MainWindow::on_flashBrowse_clicked()
 {
-    QFileDialog dlg(this);
-    dlg.setFileMode(QFileDialog::ExistingFile);
-    dlg.setNameFilter("*.hex");
-    if (dlg.exec())
-        ui->flashEdit->setText(dlg.selectedFiles().at(0));
+    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
+                                                    QString(), "HEX (*.hex)");
+    if (!fileName.isEmpty())
+        ui->flashEdit->setText(fileName);
 }
 
 void MainWindow::on_eepromBrowse_clicked()
 {
-    QFileDialog dlg(this);
-    dlg.setFileMode(QFileDialog::ExistingFile);
-    dlg.setNameFilter("*.eep");
-    if (dlg.exec())
-        ui->eepromEdit->setText(dlg.selectedFiles().at(0));
+    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
+                                                    QString(), "EEPROM (*.eep)");
+    if (!fileName.isEmpty())
+        ui->eepromEdit->setText(fileName);
 }
 
 void MainWindow::on_pfileBrowse_clicked()
 {
-    QFileDialog dlg(this);
-    dlg.setFileMode(QFileDialog::ExistingFile);
-    dlg.setNameFilter("*.elf");
-    if (dlg.exec())
-        ui->pfileEdit->setText(dlg.selectedFiles().at(0));
+    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
+                                                    QString(), "ELF (*.elf)");
+    if (!fileName.isEmpty())
+    {
+        ui->pfileEdit->setText(fileName);
+        on_pfileEdit_editingFinished();
+    }
+}
+
+void MainWindow::on_pfileEdit_editingFinished()
+{
+    QStringList sections;
+    getElfSections(ui->pfileEdit->text(), sections);
+    ui->pfileFuses->setChecked(sections.contains(".fuse"));
+    ui->pfileFuses->setEnabled(sections.contains(".fuse"));
+    ui->pfileFlash->setChecked(sections.contains(".text"));
+    ui->pfileFlash->setEnabled(sections.contains(".text"));
+    ui->pfileEeprom->setChecked(sections.contains(".eeprom"));
+    ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
 }
 
 void MainWindow::on_startButton_clicked()
@@ -256,7 +310,7 @@ void MainWindow::on_startButton_clicked()
                      << "-t" << programmer
                      << "-i" << interface
                      << "-d" << target
-                     << "program" << "--verify"
+                     << "program" << "--verify" << "-c"
                      << "--format" << "hex"
                      << "-ee" << "-f" << ui->eepromEdit->text();
                 m_commandQueue.enqueue(args);
@@ -270,8 +324,8 @@ void MainWindow::on_startButton_clicked()
     }
     else if (ui->tabWidget->currentWidget() == ui->pfileTab)
     {
-        QFileInfo file(ui->pfileEdit->text());
-        if (file.exists() && file.isFile())
+        QFileInfo fileInfo(ui->pfileEdit->text());
+        if (fileInfo.exists() && fileInfo.isFile())
         {
             bool warn = true;
             QStringList args;
@@ -279,7 +333,9 @@ void MainWindow::on_startButton_clicked()
                  << "-t" << programmer
                  << "-i" << interface
                  << "-d" << target
-                 << "program" << "--verify";
+                 << "program" << "--verify" << "-c"
+                 << "-f" << ui->pfileEdit->text();
+
             if (ui->pfileFuses->isChecked())
             {
                 args << "-fs";
@@ -298,8 +354,6 @@ void MainWindow::on_startButton_clicked()
                 warn = false;
             }
 
-            args << "-f" << ui->pfileEdit->text();
-
             bool proceed = true;
             if (warn)
             {
@@ -308,7 +362,8 @@ void MainWindow::on_startButton_clicked()
                     QCheckBox *cb = new QCheckBox("Don't show again");
                     QMessageBox msg(this);
                     msg.setCheckBox(cb);
-                    msg.setText("Leaving all boxes unchecked will flash the full contents of the production file.\n"
+                    msg.setText("No memory sections have been selected.\n"
+                                "This will flash the full contents of the production file.\n"
                                 "Do you want to continue?");
                     msg.setIcon(QMessageBox::Question);
                     msg.addButton(QMessageBox::Yes);
@@ -349,7 +404,7 @@ void MainWindow::on_startButton_clicked()
 void MainWindow::on_showDebug_toggled(bool checked)
 {
     ui->commandOutput->setVisible(checked);
-    qApp->processEvents();
+    qApp->processEvents(); //Process the hide event before we adjust size.
     this->adjustSize();
 }
 
@@ -367,9 +422,75 @@ void MainWindow::setRunning(bool running)
 
 void MainWindow::startProcess(const QStringList& args)
 {
-    ui->commandOutput->append(k_program + " " + args.join(" "));
+    ui->commandOutput->append(k_programName + " " + args.join(" "));
     QScrollBar *sb = ui->commandOutput->verticalScrollBar();
     sb->setValue(sb->maximum());
     m_process->setArguments(args);
     m_process->start();
+}
+
+bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
+{
+    QFile file(fileName);
+    if (!file.open(QFile::ReadOnly))
+    {
+        qDebug()<<file.errorString();
+        return false;
+    }
+
+    QByteArray ba;
+    ba.resize(0x3E);
+    qint64 len = file.read(ba.data(), 0x34);
+    if (len < 0)
+    {
+        qDebug()<<file.errorString();
+        return false;
+    }
+
+    quint8 numOfSections = static_cast<quint8>(ba.at(0x30));
+    quint8 sizeOfSection = static_cast<quint8>(ba.at(0x2E));
+    quint8 sectionTableOffset = static_cast<quint8>(ba.at(0x20));
+    int sectionTableSize = numOfSections * sizeOfSection;
+
+    ba.clear();
+    ba.resize(sectionTableSize);
+    file.seek(sectionTableOffset);
+    if (file.read(ba.data(), sectionTableSize) < 0)
+    {
+        qDebug()<<file.errorString();
+        return false;
+    }
+
+    int stringTableSize = 0;
+    int stringTableOffset = 0;
+    for (int offset = 0; offset < sectionTableSize; offset += sizeOfSection)
+    {
+        if (ba.at(offset + 0x4) == 0x03)
+        {
+            stringTableOffset = static_cast<quint8>(ba.at(offset + 0x10));
+            stringTableOffset |= static_cast<quint32>(ba.at(offset + 0x11) << 8);
+            stringTableOffset |= static_cast<quint32>(ba.at(offset + 0x12) << 16);
+
+            stringTableSize = static_cast<quint8>(ba.at(offset + 0x14));
+            stringTableSize |= static_cast<quint32>(ba.at(offset + 0x15) << 8);
+            stringTableSize |= static_cast<quint32>(ba.at(offset + 0x16) << 16);
+            break;
+        }
+    }
+
+    ba.clear();
+    ba.resize(stringTableSize);
+    file.seek(stringTableOffset + 1);
+    if (file.read(ba.data(), stringTableSize) < 0)
+    {
+        qDebug()<<file.errorString();
+        return false;
+    }
+
+    foreach (const QByteArray &ba, ba.split(0))
+    {
+        sections.append(QString(ba));
+    }
+
+    return true;
 }
