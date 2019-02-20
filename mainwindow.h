@@ -19,15 +19,17 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private slots:
     void on_readyRead();
     void on_error(QProcess::ProcessError error);
     void on_processFinished(int exitCode);
-    void on_startButton_clicked();
     void on_flashBrowse_clicked();
     void on_eepromBrowse_clicked();
     void on_pfileBrowse_clicked();
+    void on_pfileEdit_editingFinished();
+    void on_startButton_clicked();
     void on_showDebug_toggled(bool checked);
 
 private:
@@ -39,6 +41,7 @@ private:
 
     void setRunning(bool running);
     void startProcess(const QStringList& args);
+    bool getElfSections(const QString& fileName, QStringList &sections);
 };
 
 #endif // MAINWINDOW_H
