@@ -71,7 +71,7 @@ MainWindow::MainWindow(QWidget *parent) :
         atprogram = QFileInfo(dir + k_programName);
         if (atprogram.exists() && atprogram.isFile())
         {
-            ui->statusBar->showMessage(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
+            ui->commandOutput->append(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
             found = true;
             break;
         }
@@ -115,6 +115,7 @@ MainWindow::MainWindow(QWidget *parent) :
         ui->targetComboBox->setCompleter(completer);
 
         m_process->setProgram(atprogram.canonicalFilePath());
+        m_process->setWorkingDirectory(atprogram.canonicalPath());
         m_process->setProcessChannelMode(QProcess::MergedChannels);
         connect(m_process, &QProcess::readyRead, this, &MainWindow::on_readyRead);
         connect(m_process, &QProcess::errorOccurred, this, &MainWindow::on_error);
@@ -131,6 +132,9 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->targetComboBox->setCurrentText(settings.value("target", "Atmega32U4").toString());
 
     ui->commandOutput->setVisible(ui->showDebug->isChecked());
+
+    ui->commandOutput->append(QString("Using program %1").arg(m_process->program()));
+    ui->commandOutput->append(QString("Using working directory %1").arg(m_process->workingDirectory()));
 }
 
 MainWindow::~MainWindow()
@@ -422,7 +426,7 @@ void MainWindow::setRunning(bool running)
 
 void MainWindow::startProcess(const QStringList& args)
 {
-    ui->commandOutput->append(k_programName + " " + args.join(" "));
+    ui->commandOutput->append(k_programName + " " + args.join(" ") + "\n");
     QScrollBar *sb = ui->commandOutput->verticalScrollBar();
     sb->setValue(sb->maximum());
     m_process->setArguments(args);
