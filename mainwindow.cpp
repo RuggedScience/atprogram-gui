@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "tinyxml2.h"
+#include "crc32.h"
 
 #include <QTimer>
 #include <QDebug>
@@ -10,7 +11,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDirIterator>
-#include <QXmlStreamReader>
+#include <QMimeData>
 
 static const QString k_programName = "atprogram.exe";
 
@@ -152,7 +153,6 @@ void MainWindow::closeEvent(QCloseEvent *)
     settings.setValue("programmer", ui->programmerComboBox->currentText());
     settings.setValue("interface", ui->interfaceComboBox->currentText());
     settings.setValue("target", ui->targetComboBox->currentText());
-
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
@@ -167,6 +167,50 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     }
 
     return QObject::eventFilter(obj, event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    event->acceptProposedAction();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+    event->acceptProposedAction();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
+{
+    event->accept();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    const QMimeData *mimeData = event->mimeData();
+    if (mimeData->hasUrls())
+    {
+        foreach (const QUrl& url, mimeData->urls())
+        {
+            QString path = url.path().mid(1);
+            QFileInfo info(path);
+            QString suffix = info.suffix();
+            if (suffix == "elf")
+            {
+                ui->pfileEdit->setText(path);
+                on_pfileEdit_editingFinished();
+            }
+            else if (suffix == "hex")
+            {
+                ui->flashGroup->setChecked(true);
+                ui->flashEdit->setText(path);
+            }
+            else if (suffix == "eep")
+            {
+                ui->eepromGroup->setChecked(true);
+                ui->eepromEdit->setText(path);
+            }
+        }
+    }
 }
 
 void MainWindow::on_readyRead()
@@ -233,14 +277,20 @@ void MainWindow::on_pfileBrowse_clicked()
 
 void MainWindow::on_pfileEdit_editingFinished()
 {
-    QStringList sections;
-    getElfSections(ui->pfileEdit->text(), sections);
-    ui->pfileFuses->setChecked(sections.contains(".fuse"));
-    ui->pfileFuses->setEnabled(sections.contains(".fuse"));
-    ui->pfileFlash->setChecked(sections.contains(".text"));
-    ui->pfileFlash->setEnabled(sections.contains(".text"));
-    ui->pfileEeprom->setChecked(sections.contains(".eeprom"));
-    ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
+    if (QFileInfo(ui->pfileEdit->text()).isFile())
+    {
+        QStringList sections;
+        getElfSections(ui->pfileEdit->text(), sections);
+        ui->pfileFuses->setChecked(sections.contains(".fuse"));
+        ui->pfileFuses->setEnabled(sections.contains(".fuse"));
+        ui->pfileFlash->setChecked(sections.contains(".text"));
+        ui->pfileFlash->setEnabled(sections.contains(".text"));
+        ui->pfileEeprom->setChecked(sections.contains(".eeprom"));
+        ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
+
+        QString crc32 = getCRC32(ui->pfileEdit->text());
+        ui->statusBar->showMessage(QString("FW Version: %1").arg(crc32));
+    }
 }
 
 void MainWindow::on_startButton_clicked()

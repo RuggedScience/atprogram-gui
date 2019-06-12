@@ -30,6 +30,7 @@ SOURCES += \
     tinyxml2.cpp
 
 HEADERS += \
+    crc32.h \
         mainwindow.h \
     tinyxml2.h
 

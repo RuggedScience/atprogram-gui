@@ -3,6 +3,7 @@
 
 #include <QQueue>
 #include <QProcess>
+#include <QDropEvent>
 #include <QMainWindow>
 
 namespace Ui {
@@ -20,6 +21,11 @@ public:
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
+
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dragLeaveEvent(QDragLeaveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void on_readyRead();
