@@ -289,7 +289,7 @@ void MainWindow::on_pfileEdit_editingFinished()
         ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
 
         QString crc32 = getCRC32(ui->pfileEdit->text());
-        ui->statusBar->showMessage(QString("FW Version: %1").arg(crc32));
+        ui->statusBar->showMessage(QString("CRC32: %1").arg(crc32));
     }
 }
 
