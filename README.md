@@ -3,7 +3,7 @@ A simple GUI wrapper around Atmel's atprogram utility with a very creative name.
 
 # Intent
 To allow inexperiecned users to easily program Atmel MCUs in a production environment. \
-The GUI allows the flash process to be easily documented and reprodced.
+The GUI allows the flash process to be easily documented and reproduced.
 
 # Features
 * Drag & Drop multiple files at once
