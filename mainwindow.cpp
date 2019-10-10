@@ -16,9 +16,9 @@
 static const QString k_programName = "atprogram.exe";
 
 static const QStringList k_searchDirs = QStringList()
+        << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
         << "./atbackend/"
-        << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/"
-        << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/";
+        << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/";
 
 static const QStringList k_programmers = QStringList()
         << "avrdragon"
