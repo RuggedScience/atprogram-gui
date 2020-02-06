@@ -17,7 +17,6 @@ static const QString k_programName = "atprogram.exe";
 
 static const QStringList k_searchDirs = QStringList()
         << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
-        << "./atbackend/"
         << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/";
 
 static const QStringList k_programmers = QStringList()
@@ -59,11 +58,14 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->setupUi(this);
     ui->programmerComboBox->addItems(k_programmers);
     ui->interfaceComboBox->addItems(k_interfaces);
+    ui->targetComboBox->installEventFilter(this);
 
-    //Used to "selectAll" on focus in event
-    ui->lowFuseEdit->installEventFilter(this);
-    ui->highFuseEdit->installEventFilter(this);
-    ui->extFuseEdit->installEventFilter(this);
+    // Hide user signatures group since it hasn't been implemented yet
+    ui->userSigsGroup->setHidden(true);
+    // Hide lock bits check box since it hasn't been implemented yet
+    ui->pfileLockBits_cb->setHidden(true);
+
+    connect(ui->targetComboBox, QOverload<const QString &>::of(&QComboBox::activated), this, &MainWindow::handleTargetChanged);
 
     bool found = false;
     QFileInfo atprogram;
@@ -80,62 +82,52 @@ MainWindow::MainWindow(QWidget *parent) :
 
     if (found)
     {
-
-        QStringList targetList;
         QString packsDir = atprogram.canonicalPath() + "/../packs";
-        QDirIterator it(packsDir, QStringList() << "package.content", QDir::NoFilter, QDirIterator::Subdirectories);
-        while (it.hasNext())
+        m_packManager.setPath(packsDir);
+        if (m_packManager.isValid())
         {
-            // QXmlStreamReader didn't like the ASCII encoding used in the package.content files
-            using namespace tinyxml2;
-            XMLDocument doc;
-            std::string fileName = it.next().toStdString();
-            if (doc.LoadFile(fileName.c_str()) == XML_SUCCESS)
-            {
-                XMLElement *e = nullptr;
-                if ((e = doc.FirstChildElement("package")))
-                {
-                    if ((e = e->FirstChildElement("content")))
-                    {
-                        for (e = e->FirstChildElement("resources"); e; e = e->NextSiblingElement("resources"))
-                        {
-                            QString attr(e->Attribute("target"));
-                            if (!attr.isEmpty())
-                            {
-                                targetList.append(attr);
-                                ui->targetComboBox->addItem(attr);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+            QStringList targetList = m_packManager.getAllTargets();
+            ui->targetComboBox->addItems(targetList);
         QCompleter *completer = new QCompleter(targetList, this);
         completer->setCaseSensitivity(Qt::CaseInsensitive);
         ui->targetComboBox->setCompleter(completer);
+        }
 
         m_process->setProgram(atprogram.canonicalFilePath());
         m_process->setWorkingDirectory(atprogram.canonicalPath());
         m_process->setProcessChannelMode(QProcess::MergedChannels);
         connect(m_process, &QProcess::readyRead, this, &MainWindow::on_readyRead);
         connect(m_process, &QProcess::errorOccurred, this, &MainWindow::on_error);
-        connect(m_process, QOverload<int>::of(&QProcess::finished), this, &MainWindow::on_processFinished);
+        connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::on_processFinished);
     }
 
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
                        "RuggedScience", "atprogram-gui");
-    this->restoreGeometry(settings.value("geometry").toByteArray());
+    m_lastDialogState = settings.value("lastDialogState").toByteArray();
     m_showPfileWarning = settings.value("showPfileWarning", true).toBool();
     ui->showDebug->setChecked(settings.value("showDebug", true).toBool());
-    ui->programmerComboBox->setCurrentText(settings.value("programmer", "atmelice").toString());
-    ui->interfaceComboBox->setCurrentText(settings.value("interface", "ISP").toString());
-    ui->targetComboBox->setCurrentText(settings.value("target", "Atmega32U4").toString());
+    ui->programmerComboBox->setCurrentText(settings.value("programmer").toString());
+    ui->interfaceComboBox->setCurrentText(settings.value("interface").toString());
+    ui->targetComboBox->setCurrentText(settings.value("target").toString());
+    m_geometry = settings.value("geometry").toByteArray();
+    m_debugGeometry = settings.value("debugGeometry").toByteArray();
 
     ui->commandOutput->setVisible(ui->showDebug->isChecked());
-
     ui->commandOutput->append(QString("Using program %1").arg(m_process->program()));
     ui->commandOutput->append(QString("Using working directory %1").arg(m_process->workingDirectory()));
+
+    // Save restoreGeometry for last. Bug causes geometry to revert back to default after adjusting the above UI components.
+    if (ui->showDebug->isChecked())
+        this->restoreGeometry(m_debugGeometry);
+    else
+        this->restoreGeometry(m_geometry);
+
+    // If there was no target in the settings
+    // just set target to the first one found.
+    if (ui->targetComboBox->currentText().isEmpty())
+        ui->targetComboBox->setCurrentIndex(0);
+    // Force update of fuse info
+    handleTargetChanged(ui->targetComboBox->currentText());
 }
 
 MainWindow::~MainWindow()
@@ -147,7 +139,9 @@ void MainWindow::closeEvent(QCloseEvent *)
 {
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
                        "RuggedScience", "atprogram-gui");
-    settings.setValue("geometry", this->saveGeometry());
+    settings.setValue("geometry", m_geometry);
+    settings.setValue("debugGeometry", m_debugGeometry);
+    settings.setValue("lastDialogState", m_lastDialogState);
     settings.setValue("showPfileWarning", m_showPfileWarning);
     settings.setValue("showDebug", ui->showDebug->isChecked());
     settings.setValue("programmer", ui->programmerComboBox->currentText());
@@ -157,13 +151,18 @@ void MainWindow::closeEvent(QCloseEvent *)
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == ui->lowFuseEdit || obj == ui->highFuseEdit || obj == ui->extFuseEdit)
+    if (HexSpinBox *sb = qobject_cast<HexSpinBox *>(obj))
     {
-        if (event->type() == QEvent::FocusIn)
+        if (m_fuseEditList.contains(sb))
         {
-            QLineEdit *le = qobject_cast<QLineEdit *>(obj);
-            QTimer::singleShot(0, le, SLOT(selectAll()));
+            if (event->type() == QEvent::FocusIn)
+                QTimer::singleShot(0, sb, SLOT(selectAll()));
         }
+    }
+    else if (obj == ui->targetComboBox)
+    {
+        if (event->type() == QEvent::FocusOut)
+            handleTargetChanged(ui->targetComboBox->currentText());
     }
 
     return QObject::eventFilter(obj, event);
@@ -171,7 +170,26 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
-    event->acceptProposedAction();
+    bool accept = false;
+    const QMimeData *mimeData = event->mimeData();
+    if (mimeData->hasUrls())
+    {
+        foreach (const QUrl& url, mimeData->urls())
+        {
+            QString path = url.path().mid(1);
+            QFileInfo info(path);
+            QString suffix = info.suffix();
+            // If any of the files are elf, hex or eep we will accept the event.
+            // Only the supported files will be handled Under MainWindow::dropEvent.
+            if (suffix == "elf" || suffix == "hex" || suffix == "eep")
+            {
+                accept = true;
+                break;
+}
+        }
+    }
+
+    if (accept) event->acceptProposedAction();
 }
 
 void MainWindow::dragMoveEvent(QDragMoveEvent *event)
@@ -194,20 +212,31 @@ void MainWindow::dropEvent(QDropEvent *event)
             QString path = url.path().mid(1);
             QFileInfo info(path);
             QString suffix = info.suffix();
-            if (suffix == "elf")
+            if (ui->tabWidget->currentWidget() == ui->memTab)
             {
-                ui->pfileEdit->setText(path);
-                on_pfileEdit_editingFinished();
+                if (suffix == "elf" || suffix == "hex")
+                {
+                    ui->flashGroup->setChecked(true);
+                    ui->flash_le->setText(path);
+                }
+                else if (suffix == "eep")
+                {
+                    ui->eepromGroup->setChecked(true);
+                    ui->eeprom_le->setText(path);
+                }
+                else if (suffix == "usersignatures")
+                {
+                    ui->userSigsGroup->setChecked(true);
+                    ui->userSigs_le->setText(path);
+                }
             }
-            else if (suffix == "hex")
+            else if (ui->tabWidget->currentWidget() == ui->pfileTab)
             {
-                ui->flashGroup->setChecked(true);
-                ui->flashEdit->setText(path);
-            }
-            else if (suffix == "eep")
-            {
-                ui->eepromGroup->setChecked(true);
-                ui->eepromEdit->setText(path);
+                if (suffix == "elf")
+                {
+                    ui->pfile_le->setText(path);
+                    on_pfile_le_editingFinished();
+                }
             }
         }
     }
@@ -226,7 +255,7 @@ void MainWindow::on_error(QProcess::ProcessError)
     setRunning(false);
 }
 
-void MainWindow::on_processFinished(int exitCode)
+void MainWindow::on_processFinished(int exitCode, QProcess::ExitStatus)
 {
     if (exitCode != 0)
     {
@@ -248,230 +277,349 @@ void MainWindow::on_processFinished(int exitCode)
         startProcess(m_commandQueue.dequeue());
 }
 
-void MainWindow::on_flashBrowse_clicked()
+void MainWindow::on_flashBrowse_btn_clicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
-                                                    QString(), "HEX (*.hex)");
+    QFileDialog dlg(this);
+    dlg.setFileMode(QFileDialog::ExistingFile);
+    dlg.setNameFilter("HEX (*.hex)");
+    dlg.restoreState(m_lastDialogState);
+    if (dlg.exec())
+    {
+        QString fileName = dlg.selectedFiles().value(0);
     if (!fileName.isEmpty())
-        ui->flashEdit->setText(fileName);
+        ui->flash_le->setText(fileName);
+}
+    m_lastDialogState = dlg.saveState();
 }
 
-void MainWindow::on_eepromBrowse_clicked()
+void MainWindow::on_eepromBrowse_btn_clicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
-                                                    QString(), "EEPROM (*.eep)");
-    if (!fileName.isEmpty())
-        ui->eepromEdit->setText(fileName);
+    QFileDialog dlg(this);
+    dlg.setFileMode(QFileDialog::ExistingFile);
+    dlg.setNameFilter("EEPROM (*.eep)");
+    dlg.restoreState(m_lastDialogState);
+    if (dlg.exec())
+    {
+        QString fileName = dlg.selectedFiles().value(0);
+        if (!fileName.isEmpty())
+            ui->eeprom_le->setText(fileName);
+    }
+    m_lastDialogState = dlg.saveState();
+}
+void MainWindow::on_userSigsBrowse_btn_clicked()
+{
+    QFileDialog dlg(this);
+    dlg.setFileMode(QFileDialog::ExistingFile);
+    dlg.setNameFilter("User Signatures (*.usersignatures)");
+    dlg.restoreState(m_lastDialogState);
+    if (dlg.exec())
+    {
+        QString fileName = dlg.selectedFiles().value(0);
+        if (!fileName.isEmpty())
+            ui->userSigs_le->setText(fileName);
+    }
+    m_lastDialogState = dlg.saveState();
 }
 
 void MainWindow::on_pfileBrowse_clicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
-                                                    QString(), "ELF (*.elf)");
+    QFileDialog dlg(this);
+    dlg.setFileMode(QFileDialog::ExistingFile);
+    dlg.setNameFilter("ELF (*.elf)");
+    dlg.restoreState(m_lastDialogState);
+    if (dlg.exec())
+    {
+        QString fileName = dlg.selectedFiles().value(0);
     if (!fileName.isEmpty())
     {
-        ui->pfileEdit->setText(fileName);
-        on_pfileEdit_editingFinished();
+        ui->pfile_le->setText(fileName);
+        on_pfile_le_editingFinished();
     }
 }
+    m_lastDialogState = dlg.saveState();
+}
 
-void MainWindow::on_pfileEdit_editingFinished()
+void MainWindow::on_pfile_le_editingFinished()
 {
-    if (QFileInfo(ui->pfileEdit->text()).isFile())
+    if (QFileInfo(ui->pfile_le->text()).isFile())
     {
-        QStringList sections;
-        getElfSections(ui->pfileEdit->text(), sections);
-        ui->pfileFuses->setChecked(sections.contains(".fuse"));
-        ui->pfileFuses->setEnabled(sections.contains(".fuse"));
-        ui->pfileFlash->setChecked(sections.contains(".text"));
-        ui->pfileFlash->setEnabled(sections.contains(".text"));
-        ui->pfileEeprom->setChecked(sections.contains(".eeprom"));
-        ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
+        QString fileName = ui->pfile_le->text();
 
-        QString crc32 = getCRC32(ui->pfileEdit->text());
-        ui->statusBar->showMessage(QString("CRC32: %1").arg(crc32));
+        bool contains;
+        QStringList sections;
+        getElfSections(fileName, sections);
+
+        if (ui->pfileFuses_cb->isVisible())
+        {
+            contains = sections.contains(".fuse");
+            ui->pfileFuses_cb->setChecked(contains);
+            ui->pfileFuses_cb->setEnabled(contains);
+        }
+
+        if (ui->pfileFlash_cb->isVisible())
+        {
+            contains = sections.contains(".text");
+            ui->pfileFlash_cb->setChecked(contains);
+            ui->pfileFlash_cb->setEnabled(contains);
+        }
+
+        if (ui->pfileEeprom_cb->isVisible())
+        {
+            contains = sections.contains(".eeprom");
+            ui->pfileEeprom_cb->setChecked(contains);
+            ui->pfileEeprom_cb->setEnabled(contains);
+        }
+
+        if (ui->pfileLockBits_cb->isVisible())
+        {
+            contains = sections.contains(".lockbits");
+            ui->pfileLockBits_cb->setChecked(contains);
+            ui->pfileLockBits_cb->setEnabled(contains);
+        }
+
+        if (ui->pfileUserSigs_cb->isVisible())
+        {
+            contains = sections.contains(".user_signatures");
+            ui->pfileUserSigs_cb->setChecked(contains);
+            ui->pfileUserSigs_cb->setEnabled(contains);
+        }
+
+        ui->statusBar->showMessage(QString("CRC32: %1").arg(getCRC32(fileName)));
     }
 }
 
-void MainWindow::on_startButton_clicked()
+void MainWindow::on_memProgram_btn_clicked()
 {
     if (m_running) return;
 
+    bool error = false;
     m_commandQueue.clear();
-    ui->commandOutput->clear();
-    ui->progressBar->setFormat("Ready");
-    ui->progressBar->setStyleSheet("");
-    ui->startButton->setEnabled(false); //Disable start button so they don't spam click it...
-    QString programmer = ui->programmerComboBox->currentText();
-    QString interface = ui->interfaceComboBox->currentText();
-    QString target = ui->targetComboBox->currentText().toLower();
+    const QString programmer = ui->programmerComboBox->currentText();
+    const QString interface = ui->interfaceComboBox->currentText();
+    const QString target = ui->targetComboBox->currentText().toLower();
 
-    if (ui->tabWidget->currentWidget() == ui->memTab)
+    if (ui->flashGroup->isChecked())
     {
-        if (ui->fuseGroup->isChecked())
+        QFileInfo file(ui->flash_le->text());
+        if (file.exists() && file.isFile())
         {
-            QString fuses;
-            fuses.append(ui->lowFuseEdit->text());
-            fuses.append(ui->highFuseEdit->text());
-            fuses.append(ui->extFuseEdit->text());
-
-            if (fuses.size() == 6)
-            {
-                QStringList args;
-                args << "-v"
-                     << "-t" << programmer
-                     << "-i" << interface
-                     << "-d" << target
-                     << "write"
-                     << "-fs" << "--values" << fuses;
-                m_commandQueue.enqueue(args);
-            }
-            else
-            {
-                m_commandQueue.clear();
-                ui->statusBar->showMessage("All fuses must be set!");
-            }
-        }
-
-        if (ui->flashGroup->isChecked())
-        {
-            QFileInfo file(ui->flashEdit->text());
-            if (file.exists() && file.isFile())
-            {
-                QStringList args;
-                args << "-v"
-                     << "-t" << programmer
-                     << "-i" << interface
-                     << "-d" << target
-                     << "program" << "--verify" << "-c"
-                     << "-fl" << "-f" << ui->flashEdit->text();
-                m_commandQueue.enqueue(args);
-            }
-            else
-            {
-                m_commandQueue.clear();
-                ui->statusBar->showMessage("Flash file does not exist!");
-            }
-        }
-
-        if (ui->eepromGroup->isChecked())
-        {
-            QFileInfo file(ui->eepromEdit->text());
-            if (file.exists() && file.isFile())
-            {
-                QStringList args;
-                args << "-v"
-                     << "-t" << programmer
-                     << "-i" << interface
-                     << "-d" << target
-                     << "program" << "--verify" << "-c"
-                     << "--format" << "hex"
-                     << "-ee" << "-f" << ui->eepromEdit->text();
-                m_commandQueue.enqueue(args);
-            }
-            else
-            {
-                m_commandQueue.clear();
-                ui->statusBar->showMessage("EEPROM file does not exist!");
-            }
-        }
-    }
-    else if (ui->tabWidget->currentWidget() == ui->pfileTab)
-    {
-        QFileInfo fileInfo(ui->pfileEdit->text());
-        if (fileInfo.exists() && fileInfo.isFile())
-        {
-            bool warn = true;
             QStringList args;
             args << "-v"
                  << "-t" << programmer
                  << "-i" << interface
                  << "-d" << target
-                 << "program" << "--verify" << "-c"
-                 << "-f" << ui->pfileEdit->text();
+                 << "program";
 
-            if (ui->pfileFuses->isChecked())
-            {
-                args << "-fs";
-                warn = false;
-            }
+            if (ui->flashErase_cb->isChecked())
+                args << "-e";
 
-            if (ui->pfileFlash->isChecked())
-            {
-                args << "-fl";
-                warn = false;
-            }
+            if (ui->flashVerify_cb->isChecked())
+                args << "--verify";
 
-            if (ui->pfileEeprom->isChecked())
-            {
-                args << "-ee";
-                warn = false;
-            }
+           args << "-c" << "-fl" << "-f"
+                << ui->flash_le->text();
 
-            bool proceed = true;
-            if (warn)
-            {
-                if (m_showPfileWarning)
-                {
-                    QCheckBox *cb = new QCheckBox("Don't show again");
-                    QMessageBox msg(this);
-                    msg.setCheckBox(cb);
-                    msg.setText("No memory sections have been selected.\n"
-                                "This will flash the full contents of the production file.\n"
-                                "Do you want to continue?");
-                    msg.setIcon(QMessageBox::Question);
-                    msg.addButton(QMessageBox::Yes);
-                    msg.addButton(QMessageBox::No);
-                    msg.setDefaultButton(QMessageBox::No);
-
-                    if (msg.exec() != QMessageBox::Yes)
-                        proceed = false;
-
-                    m_showPfileWarning = !cb->isChecked();
-                }
-            }
-
-            if (proceed)
-                m_commandQueue.enqueue(args);
+            m_commandQueue.enqueue(args);
+            ui->flash_le->setStyleSheet("");
         }
         else
         {
-            m_commandQueue.clear();
-            ui->statusBar->showMessage("Production file does not exist!");
+            error = true;
+            ui->flash_le->setStyleSheet("border: 1px solid red;");
+            ui->statusBar->showMessage("Flash file does not exist!");
         }
     }
 
-    if (!m_commandQueue.isEmpty())
+    if (ui->eepromGroup->isChecked())
+    {
+        QFileInfo file(ui->eeprom_le->text());
+        if (file.exists() && file.isFile())
+        {
+            QStringList args;
+            args << "-v"
+                 << "-t" << programmer
+                 << "-i" << interface
+                 << "-d" << target
+                 << "program";
+
+            if (ui->eepromVerify_cb->isChecked())
+                args << "--verify";
+
+            args << "-c" << "--format" << "hex"
+                 << "-ee" << "-f" << ui->eeprom_le->text();
+
+            m_commandQueue.enqueue(args);
+            ui->eeprom_le->setStyleSheet("");
+        }
+        else
+        {
+            error = true;
+            ui->eeprom_le->setStyleSheet("border: 1px solid red;");
+            ui->statusBar->showMessage("EEPROM file does not exist!");
+        }
+    }
+
+    // TODO: Implement user signature functionality
+    if (ui->userSigsGroup->isChecked())
+    {
+
+    }
+
+    if (!error && !m_commandQueue.isEmpty())
     {
         setRunning(true);
-        ui->fuseGroup->setChecked(false);
-        ui->flashGroup->setChecked(false);
-        ui->eepromGroup->setChecked(false);
         startProcess(m_commandQueue.dequeue());
-        ui->progressBar->setFormat("Loading...");
-        ui->statusBar->clearMessage();
+    }
+}
+
+void MainWindow::on_fuseProgram_btn_clicked()
+{
+    if (m_running) return;
+
+    m_commandQueue.clear();
+    const QString programmer = ui->programmerComboBox->currentText();
+    const QString interface = ui->interfaceComboBox->currentText();
+    const QString target = ui->targetComboBox->currentText().toLower();
+
+    QString fuses;
+    foreach (HexSpinBox *sb, m_fuseEditList)
+    {
+        int val = sb->value();
+        fuses.append(QString::number(val, 16));
+    }
+
+    if (!fuses.isEmpty())
+    {
+        QStringList args;
+        args << "-v"
+             << "-t" << programmer
+             << "-i" << interface
+             << "-d" << target
+             << "write"
+             << "-fs" << "--values" << fuses;
+        setRunning(true);
+        m_commandQueue.enqueue(args);
+        startProcess(m_commandQueue.dequeue());
+    }
+}
+
+void MainWindow::on_pfileProgram_btn_clicked()
+{
+    if (m_running) return;
+
+    m_commandQueue.clear();
+    const QFileInfo fileInfo(ui->pfile_le->text());
+    const QString programmer = ui->programmerComboBox->currentText();
+    const QString interface = ui->interfaceComboBox->currentText();
+    const QString target = ui->targetComboBox->currentText().toLower();
+    if (fileInfo.exists() && fileInfo.isFile())
+    {
+        ui->pfile_le->setStyleSheet("");
+
+        bool warn = true;
+        QStringList args;
+        args << "-v"
+             << "-t" << programmer
+             << "-i" << interface
+             << "-d" << target
+             << "program" << "-c"
+             << "-f" << ui->pfile_le->text();
+
+        if (ui->pfileErase_cb->isChecked())
+            args << "-e";
+
+        if (ui->pfileVerify_cb->isChecked())
+            args << "--verify";
+
+        if (ui->pfileFuses_cb->isChecked())
+        {
+            args << "-fs";
+            warn = false;
+        }
+
+        if (ui->pfileFlash_cb->isChecked())
+        {
+            args << "-fl";
+            warn = false;
+        }
+
+        if (ui->pfileEeprom_cb->isChecked())
+        {
+            args << "-ee";
+            warn = false;
+        }
+
+        bool proceed = true;
+        if (warn)
+        {
+            if (m_showPfileWarning)
+            {
+                QCheckBox *cb = new QCheckBox("Don't show again");
+                QMessageBox msg(this);
+                msg.setCheckBox(cb);
+                msg.setText("No memory sections have been selected.\n"
+                            "This will flash the full contents of the production file.\n"
+                            "Do you want to continue?");
+                msg.setIcon(QMessageBox::Question);
+                msg.addButton(QMessageBox::Yes);
+                msg.addButton(QMessageBox::No);
+                msg.setDefaultButton(QMessageBox::No);
+
+                if (msg.exec() != QMessageBox::Yes)
+                    proceed = false;
+
+                m_showPfileWarning = !cb->isChecked();
+            }
+        }
+
+        if (proceed)
+        {
+            setRunning(true);
+            m_commandQueue.enqueue(args);
+            startProcess(m_commandQueue.dequeue());
+        }
     }
     else
-        ui->startButton->setEnabled(true); // If there is nothing to start we need to re-enable this
+    {
+        setRunning(false);
+        m_commandQueue.clear();
+        ui->pfile_le->setStyleSheet("border: 1px solid red;");
+        ui->statusBar->showMessage("Production file does not exist!");
+    }
 }
 
 void MainWindow::on_showDebug_toggled(bool checked)
 {
     ui->commandOutput->setVisible(checked);
-    qApp->processEvents(); //Process the hide event before we adjust size.
-    this->adjustSize();
+
+    if (checked)
+    {
+        m_geometry = this->saveGeometry();
+        this->restoreGeometry(m_debugGeometry);
+    }
+    else
+    {
+        m_debugGeometry = this->saveGeometry();
+        this->restoreGeometry(m_geometry);
+    }
 }
 
 void MainWindow::setRunning(bool running)
 {
     m_running = running;
-    ui->fuseGroup->setDisabled(running);
-    ui->flashGroup->setDisabled(running);
-    ui->eepromGroup->setDisabled(running);
-    ui->startButton->setDisabled(running);
+    ui->tabWidget->setDisabled(m_running);
 
-    if (running) ui->progressBar->setMaximum(0);
-    else ui->progressBar->setMaximum(1);
+    if (running)
+    {
+        ui->commandOutput->clear();
+        ui->statusBar->clearMessage();
+        ui->progressBar->setMaximum(0);
+        ui->progressBar->setFormat("Loading...");
+    }
+    else
+    {
+        ui->progressBar->setMaximum(1);
+    }
 }
 
 void MainWindow::startProcess(const QStringList& args)
@@ -483,6 +631,7 @@ void MainWindow::startProcess(const QStringList& args)
     m_process->start();
 }
 
+// https://en.wikipedia.org/wiki/Executable_and_Linkable_Format#File_header
 bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
 {
     QFile file(fileName);
@@ -547,4 +696,84 @@ bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
     }
 
     return true;
+}
+
+void MainWindow::handleTargetChanged(const QString &newTarget)
+{
+    static QString currentTarget;
+    if (newTarget == currentTarget) return;
+
+    // Remove previous fuses and interfaces
+    qDeleteAll(m_fuseEditList);
+    m_fuseEditList.clear();
+    qDeleteAll(m_fuseLabelList);
+    m_fuseLabelList.clear();
+    ui->interfaceComboBox->clear();
+
+    if (ui->targetComboBox->findText(newTarget) == -1)
+    {
+        ui->targetComboBox->setStyleSheet("border: 1px solid red;");
+    }
+    else
+    {
+        currentTarget = newTarget;
+        ui->targetComboBox->setStyleSheet("");
+
+        if (m_packManager.isValid())
+        {
+            QStringList interfaces = m_packManager.getInterfaces(newTarget);
+            ui->interfaceComboBox->addItems(interfaces);
+
+            bool exists;
+            QStringList memories = m_packManager.getMemories(newTarget);
+
+            // Flash
+            exists = memories.contains("prog");
+            ui->flashGroup->setVisible(exists);
+            ui->pfileFlash_cb->setVisible(exists);
+            ui->flash_le->clear();
+
+            // EEPROM
+            exists = memories.contains("eeprom");
+            ui->eepromGroup->setVisible(exists);
+            ui->pfileEeprom_cb->setVisible(exists);
+            ui->eeprom_le->clear();
+
+            /* TODO: Implement user signatures functionality
+            // User Signatures
+            exists = memories.contains("user_signatures");
+            ui->userSigsGroup->setVisible(exists);
+            ui->pfileUserSigs_cb->setVisible(exists);
+            ui->userSigs_le->clear();
+            */
+
+            /* TODO: Implement lock bit functionality
+            // Lock bits
+            exists = memories.contains("lockbits");
+            ui->pfileLockBits_cb->setVisible(exists);
+            */
+
+            QWidget *first = ui->commandOutput; // When we update the tab order, start right after fuseGroup.
+            QList<AtPackManager::FuseInfo> fuseInfoList = m_packManager.getFuseInfo(newTarget);
+            for (int i = 0; i < fuseInfoList.size(); ++i)
+            {
+                const AtPackManager::FuseInfo &info = fuseInfoList.at(i);
+
+                QLabel *label = new QLabel(info.name);
+                label->setToolTip(info.description);
+                m_fuseLabelList.append(label);
+
+                HexSpinBox *sb = new HexSpinBox();
+                sb->setToolTip(info.description);
+                sb->installEventFilter(this);
+                m_fuseEditList.append(sb);
+
+                ui->gridLayout->addWidget(label, i, 0);
+                ui->gridLayout->addWidget(sb, i , 1);
+
+                this->setTabOrder(first, sb);
+                first = sb;
+            }
+        }
+    }
 }

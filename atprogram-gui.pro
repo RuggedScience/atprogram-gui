@@ -25,12 +25,15 @@ DEFINES += QT_DEPRECATED_WARNINGS
 CONFIG += c++11
 
 SOURCES += \
+    atpackmanager.cpp \
         main.cpp \
         mainwindow.cpp \
     tinyxml2.cpp
 
 HEADERS += \
+    atpackmanager.h \
     crc32.h \
+    hexspinbox.h \
         mainwindow.h \
     tinyxml2.h
 
