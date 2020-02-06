@@ -43,16 +43,12 @@ private slots:
     void on_memProgram_btn_clicked();
     void on_fuseProgram_btn_clicked();
     void on_pfileProgram_btn_clicked();
-    void on_showDebug_toggled(bool checked);
-
     void on_userSigsBrowse_btn_clicked();
 
 private:
     Ui::MainWindow *ui;
     bool m_running;
     bool m_showPfileWarning;
-    QByteArray m_geometry;
-    QByteArray m_debugGeometry;
     QByteArray m_lastDialogState;
     QProcess *m_process;
     AtPackManager m_packManager;

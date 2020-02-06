@@ -664,6 +664,12 @@
       <property name="enabled">
        <bool>true</bool>
       </property>
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="styleSheet">
        <string notr="true">QTextEdit {
 	background-color: rgb(0, 0, 0);
@@ -752,5 +758,22 @@
   <tabstop>pfileProgram_btn</tabstop>
  </tabstops>
  <resources/>
- <connections/>
+ <connections>
+  <connection>
+   <sender>showDebug</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>commandOutput</receiver>
+   <slot>setVisible(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>547</x>
+     <y>41</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>299</x>
+     <y>515</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
 </ui>

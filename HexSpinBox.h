@@ -1,8 +1,6 @@
 #ifndef HEXSPINBOX_H
 #define HEXSPINBOX_H
 
-#pragma once
-
 #include <QSpinBox>
 
 // https://stackoverflow.com/questions/26581444/qspinbox-with-unsigned-int-for-hex-input

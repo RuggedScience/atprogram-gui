@@ -13,40 +13,7 @@
 #include <QDirIterator>
 #include <QMimeData>
 
-static const QString k_programName = "atprogram.exe";
-
-static const QStringList k_searchDirs = QStringList()
-        << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
-        << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/";
-
-static const QStringList k_programmers = QStringList()
-        << "avrdragon"
-        << "avrispmk2"
-        << "avrone"
-        << "jtagice3"
-        << "jtagicemkii"
-        << "qt600"
-        << "stk500"
-        << "stk600"
-        << "samice"
-        << "edbg"
-        << "medbg"
-        << "atmelice"
-        << "powerdebugger"
-        << "megadfu"
-        << "flip";
-
-static const QStringList k_interfaces = QStringList()
-        << "aWire"
-        << "debugWIRE"
-        << "HVPP"
-        << "HVSP"
-        << "ISP"
-        << "JTAG"
-        << "PDI"
-        << "UPDI"
-        << "TPI"
-        << "SWD";
+#define ATPROGRAM_EXE QString("atprogram.exe")
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -56,8 +23,23 @@ MainWindow::MainWindow(QWidget *parent) :
     m_process(new QProcess(this))
 {
     ui->setupUi(this);
-    ui->programmerComboBox->addItems(k_programmers);
-    ui->interfaceComboBox->addItems(k_interfaces);
+    ui->programmerComboBox->addItems(QStringList()
+                                     << "avrdragon"
+                                     << "avrispmk2"
+                                     << "avrone"
+                                     << "jtagice3"
+                                     << "jtagicemkii"
+                                     << "qt600"
+                                     << "stk500"
+                                     << "stk600"
+                                     << "samice"
+                                     << "edbg"
+                                     << "medbg"
+                                     << "atmelice"
+                                     << "powerdebugger"
+                                     << "megadfu"
+                                     << "flip");
+
     ui->targetComboBox->installEventFilter(this);
 
     // Hide user signatures group since it hasn't been implemented yet
@@ -69,9 +51,13 @@ MainWindow::MainWindow(QWidget *parent) :
 
     bool found = false;
     QFileInfo atprogram;
+    const QStringList k_searchDirs = QStringList()
+          << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
+          << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/";
+
     foreach (const QString dir, k_searchDirs)
     {
-        atprogram = QFileInfo(dir + k_programName);
+        atprogram = QFileInfo(dir + ATPROGRAM_EXE);
         if (atprogram.exists() && atprogram.isFile())
         {
             ui->commandOutput->append(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
@@ -109,18 +95,11 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->programmerComboBox->setCurrentText(settings.value("programmer").toString());
     ui->interfaceComboBox->setCurrentText(settings.value("interface").toString());
     ui->targetComboBox->setCurrentText(settings.value("target").toString());
-    m_geometry = settings.value("geometry").toByteArray();
-    m_debugGeometry = settings.value("debugGeometry").toByteArray();
+    this->restoreGeometry(settings.value("geometry").toByteArray());
 
     ui->commandOutput->setVisible(ui->showDebug->isChecked());
     ui->commandOutput->append(QString("Using program %1").arg(m_process->program()));
     ui->commandOutput->append(QString("Using working directory %1").arg(m_process->workingDirectory()));
-
-    // Save restoreGeometry for last. Bug causes geometry to revert back to default after adjusting the above UI components.
-    if (ui->showDebug->isChecked())
-        this->restoreGeometry(m_debugGeometry);
-    else
-        this->restoreGeometry(m_geometry);
 
     // If there was no target in the settings
     // just set target to the first one found.
@@ -139,8 +118,7 @@ void MainWindow::closeEvent(QCloseEvent *)
 {
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
                        "RuggedScience", "atprogram-gui");
-    settings.setValue("geometry", m_geometry);
-    settings.setValue("debugGeometry", m_debugGeometry);
+    settings.setValue("geometry", this->saveGeometry());
     settings.setValue("lastDialogState", m_lastDialogState);
     settings.setValue("showPfileWarning", m_showPfileWarning);
     settings.setValue("showDebug", ui->showDebug->isChecked());
@@ -588,22 +566,6 @@ void MainWindow::on_pfileProgram_btn_clicked()
     }
 }
 
-void MainWindow::on_showDebug_toggled(bool checked)
-{
-    ui->commandOutput->setVisible(checked);
-
-    if (checked)
-    {
-        m_geometry = this->saveGeometry();
-        this->restoreGeometry(m_debugGeometry);
-    }
-    else
-    {
-        m_debugGeometry = this->saveGeometry();
-        this->restoreGeometry(m_geometry);
-    }
-}
-
 void MainWindow::setRunning(bool running)
 {
     m_running = running;
@@ -624,7 +586,7 @@ void MainWindow::setRunning(bool running)
 
 void MainWindow::startProcess(const QStringList& args)
 {
-    ui->commandOutput->append(k_programName + " " + args.join(" ") + "\n");
+    ui->commandOutput->append(ATPROGRAM_EXE + " " + args.join(" ") + "\n");
     QScrollBar *sb = ui->commandOutput->verticalScrollBar();
     sb->setValue(sb->maximum());
     m_process->setArguments(args);
