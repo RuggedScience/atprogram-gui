@@ -15,11 +15,6 @@
 
 static const QString k_programName = "atprogram.exe";
 
-static const QStringList k_searchDirs = QStringList()
-        << "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
-        << "./atbackend/"
-        << "C:/Program Files (x86)/RuggedScience/atprogram/atbackend/";
-
 static const QStringList k_programmers = QStringList()
         << "avrdragon"
         << "avrispmk2"
@@ -66,21 +61,26 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->extFuseEdit->installEventFilter(this);
 
     bool found = false;
-    QFileInfo atprogram;
-    foreach (const QString dir, k_searchDirs)
+
+    // Get relative application path
+    QDir appPath(QCoreApplication::applicationDirPath());
+
+    //TODO: Create installer https://www.youtube.com/watch?v=1pKMcwJZay4
+    //TODO: Search for microchip/atmel Studio in all drivers "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
+
+    // Search for the atprogram.exe in installation path
+    QString appDir = appPath.cleanPath(appPath.absoluteFilePath("../atprogram/atbackend/" + k_programName));
+
+    QFileInfo atprogram = QFileInfo(appDir);
+
+    if (atprogram.isFile())
     {
-        atprogram = QFileInfo(dir + k_programName);
-        if (atprogram.exists() && atprogram.isFile())
-        {
-            ui->commandOutput->append(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
-            found = true;
-            break;
-        }
+        ui->commandOutput->append(QString("Using atbackend from %1").arg(atprogram.canonicalPath()));
+        found = true;
     }
 
     if (found)
     {
-
         QStringList targetList;
         QString packsDir = atprogram.canonicalPath() + "/../packs";
         QDirIterator it(packsDir, QStringList() << "package.content", QDir::NoFilter, QDirIterator::Subdirectories);
@@ -120,7 +120,7 @@ MainWindow::MainWindow(QWidget *parent) :
         m_process->setProcessChannelMode(QProcess::MergedChannels);
         connect(m_process, &QProcess::readyRead, this, &MainWindow::on_readyRead);
         connect(m_process, &QProcess::errorOccurred, this, &MainWindow::on_error);
-        connect(m_process, QOverload<int>::of(&QProcess::finished), this, &MainWindow::on_processFinished);
+        connect(m_process, &QProcess::finished, this, &MainWindow::on_processFinished);
     }
 
     QSettings settings(QSettings::IniFormat, QSettings::UserScope,
@@ -187,6 +187,7 @@ void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
 void MainWindow::dropEvent(QDropEvent *event)
 {
     const QMimeData *mimeData = event->mimeData();
+
     if (mimeData->hasUrls())
     {
         foreach (const QUrl& url, mimeData->urls())
@@ -194,10 +195,21 @@ void MainWindow::dropEvent(QDropEvent *event)
             QString path = url.path().mid(1);
             QFileInfo info(path);
             QString suffix = info.suffix();
+
             if (suffix == "elf")
-            {
-                ui->pfileEdit->setText(path);
-                on_pfileEdit_editingFinished();
+            {                
+                // On first drop config application code
+                if (ui->pAppEdit->text().isEmpty())
+                {
+                    ui->pAppEdit->setText(path);
+                    on_pfileEdit_editingFinished(path);
+                }
+                // On second drop config bootloader code
+                else
+                {
+                    ui->pBootEdit->setText(path);
+                    on_pfileEdit_editingFinished(path);
+                }
             }
             else if (suffix == "hex")
             {
@@ -264,31 +276,64 @@ void MainWindow::on_eepromBrowse_clicked()
         ui->eepromEdit->setText(fileName);
 }
 
-void MainWindow::on_pfileBrowse_clicked()
+void MainWindow::on_pBootBrowse_clicked()
 {
     QString fileName = QFileDialog::getOpenFileName(this, "Open File",
                                                     QString(), "ELF (*.elf)");
     if (!fileName.isEmpty())
     {
-        ui->pfileEdit->setText(fileName);
-        on_pfileEdit_editingFinished();
+        ui->pBootEdit->setText(fileName);
+        on_pfileEdit_editingFinished(fileName);
     }
 }
 
-void MainWindow::on_pfileEdit_editingFinished()
+void MainWindow::on_pAppBrowse_clicked()
 {
-    if (QFileInfo(ui->pfileEdit->text()).isFile())
+    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
+                                                    QString(), "ELF (*.elf)");
+    if (!fileName.isEmpty())
+    {
+        ui->pAppEdit->setText(fileName);
+        on_pfileEdit_editingFinished(fileName);
+    }
+}
+
+void MainWindow::on_pfileEdit_editingFinished(const QString& filePath)
+{
+    if (QFileInfo(filePath).isFile())
     {
         QStringList sections;
-        getElfSections(ui->pfileEdit->text(), sections);
-        ui->pfileFuses->setChecked(sections.contains(".fuse"));
-        ui->pfileFuses->setEnabled(sections.contains(".fuse"));
-        ui->pfileFlash->setChecked(sections.contains(".text"));
-        ui->pfileFlash->setEnabled(sections.contains(".text"));
-        ui->pfileEeprom->setChecked(sections.contains(".eeprom"));
-        ui->pfileEeprom->setEnabled(sections.contains(".eeprom"));
+        getElfSections(filePath, sections);
 
-        QString crc32 = getCRC32(ui->pfileEdit->text());
+        // In case bootloader or app have fuse section, enable it
+        if ((ui->pfileFuses->isChecked() == false) && (sections.contains(".fuse")))
+        {
+            ui->pfileFuses->setChecked(true);
+            ui->pfileFuses->setEnabled(true);
+        }
+
+        // In case bootloader or app have text section, enable it
+        if ((ui->pfileFlash->isChecked() == false) && (sections.contains(".text")))
+        {
+            ui->pfileFlash->setChecked(true);
+            ui->pfileFlash->setEnabled(true);
+        }
+
+        // In case bootloader or app have eeprom section, enable it
+        if ((ui->pfileEeprom->isChecked() == false) && (sections.contains(".eeprom")))
+        {
+            ui->pfileEeprom->setChecked(true);
+            ui->pfileEeprom->setEnabled(true);
+        }
+
+        // In case bootloader or app have lock section, enable it
+        if ((ui->plockDevice->isChecked() == false) && (sections.contains(".lock")))
+        {
+            ui->plockDevice->setChecked(true);
+            ui->plockDevice->setEnabled(true);
+        }
+
+        QString crc32 = getCRC32(filePath);
         ui->statusBar->showMessage(QString("CRC32: %1").arg(crc32));
     }
 }
@@ -378,38 +423,70 @@ void MainWindow::on_startButton_clicked()
     }
     else if (ui->tabWidget->currentWidget() == ui->pfileTab)
     {
-        QFileInfo fileInfo(ui->pfileEdit->text());
-        if (fileInfo.exists() && fileInfo.isFile())
+        QFileInfo appFileInfo  (ui->pAppEdit ->text());
+        QFileInfo bootFileInfo (ui->pBootEdit->text());
+
+        if ((appFileInfo.exists()  && appFileInfo.isFile()) ||
+            (bootFileInfo.exists() && bootFileInfo.isFile()))
         {
-            bool warn = true;
+            // Do not throw warning in case exist boot and app code
+            bool warn    = true,
+                 bootApp = (bootFileInfo.isFile() && appFileInfo.isFile()),
+                 proceed = true;
+
             QStringList args;
+
             args << "-v"
                  << "-t" << programmer
                  << "-i" << interface
                  << "-d" << target
-                 << "program" << "--verify" << "-c"
-                 << "-f" << ui->pfileEdit->text();
+                 //<< "-c"              // this command does not work when the devie is locked
+                 << "chiperase"         // to full chiperase instead
+                 << "program";
 
-            if (ui->pfileFuses->isChecked())
+            if (bootApp)
             {
-                args << "-fs";
-                warn = false;
+                // Flash bootloader at the end since by default, the bootloader also sets the fuses and lock bits
+                // program the full contents of both production files but only verify application code, since boot code will
+                // lock the device and prevent verification code
+                args << "--verify"
+                     << "-f" << ui->pAppEdit->text()
+                     << "program"
+                     << "-f" << ui->pBootEdit->text();
+            }
+            // Otherwise only flash the given file
+            else
+            {
+                args << "--verify"
+                     << "-f" << ((bootFileInfo.isFile()) ? (ui->pBootEdit->text()) : (ui->pAppEdit->text()));
+
+                if (ui->pfileFuses->isChecked())
+                {
+                    args << "-fs";
+                    warn = false;
+                }
+
+                if (ui->pfileFlash->isChecked())
+                {
+                    args << "-fl";
+                    warn = false;
+                }
+
+                if (ui->pfileEeprom->isChecked())
+                {
+                    args << "-ee";
+                    warn = false;
+                }
+
+                if (ui->plockDevice->isChecked())
+                {
+                    //args << "-lb --values A33A3AA3";
+                    args << "-lb";
+                    warn = false;
+                }
             }
 
-            if (ui->pfileFlash->isChecked())
-            {
-                args << "-fl";
-                warn = false;
-            }
-
-            if (ui->pfileEeprom->isChecked())
-            {
-                args << "-ee";
-                warn = false;
-            }
-
-            bool proceed = true;
-            if (warn)
+            if ((warn == true) && (bootApp == false))
             {
                 if (m_showPfileWarning)
                 {
@@ -424,15 +501,13 @@ void MainWindow::on_startButton_clicked()
                     msg.addButton(QMessageBox::No);
                     msg.setDefaultButton(QMessageBox::No);
 
-                    if (msg.exec() != QMessageBox::Yes)
-                        proceed = false;
+                    if (msg.exec() != QMessageBox::Yes) proceed = false;
 
                     m_showPfileWarning = !cb->isChecked();
                 }
             }
 
-            if (proceed)
-                m_commandQueue.enqueue(args);
+            if (proceed) m_commandQueue.enqueue(args);
         }
         else
         {
