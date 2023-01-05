@@ -560,7 +560,9 @@ void MainWindow::startProcess(const QStringList& args)
 
 bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
 {
+    //FIXME: this is not working for AVR elf files
     QFile file(fileName);
+
     if (!file.open(QFile::ReadOnly))
     {
         qDebug()<<file.errorString();
@@ -570,6 +572,7 @@ bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
     QByteArray ba;
     ba.resize(0x3E);
     qint64 len = file.read(ba.data(), 0x34);
+
     if (len < 0)
     {
         qDebug()<<file.errorString();
@@ -590,7 +593,7 @@ bool MainWindow::getElfSections(const QString &fileName, QStringList &sections)
         return false;
     }
 
-    int stringTableSize = 0;
+    int stringTableSize   = 0;
     int stringTableOffset = 0;
     for (int offset = 0; offset < sectionTableSize; offset += sizeOfSection)
     {
