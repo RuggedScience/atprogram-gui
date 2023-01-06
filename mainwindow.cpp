@@ -12,6 +12,10 @@
 #include <QMessageBox>
 #include <QDirIterator>
 #include <QMimeData>
+#include <QStandardPaths>
+
+QString DEFAULT_BOOT_DIR;
+QString DEFAULT_APP_DIR;
 
 static const QString k_programName = "atprogram.exe";
 
@@ -64,9 +68,6 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // Get relative application path
     QDir appPath(QCoreApplication::applicationDirPath());
-
-    //TODO: Create installer https://www.youtube.com/watch?v=1pKMcwJZay4
-    //TODO: Search for microchip/atmel Studio in all drivers "C:/Program Files (x86)/Atmel/Studio/7.0/atbackend/" // Prioritize atbackend from Atmel Studio
 
     // Search for the atprogram.exe in installation path
     QString appDir = appPath.cleanPath(appPath.absoluteFilePath("../atprogram/atbackend/" + k_programName));
@@ -123,14 +124,23 @@ MainWindow::MainWindow(QWidget *parent) :
         connect(m_process, &QProcess::finished, this, &MainWindow::on_processFinished);
     }
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                       "RuggedScience", "atprogram-gui");
-    this->restoreGeometry(settings.value("geometry").toByteArray());
-    m_showPfileWarning = settings.value("showPfileWarning", true).toBool();
-    ui->showDebug->setChecked(settings.value("showDebug", true).toBool());
-    ui->programmerComboBox->setCurrentText(settings.value("programmer", "atmelice").toString());
-    ui->interfaceComboBox->setCurrentText(settings.value("interface", "ISP").toString());
-    ui->targetComboBox->setCurrentText(settings.value("target", "Atmega32U4").toString());
+    QSettings settings(QSettings::IniFormat,
+                       QSettings::UserScope,
+                       "RuggedScience",
+                       "atprogram-gui");
+
+    this->restoreGeometry(                      settings.value("geometry").toByteArray());
+    m_showPfileWarning =                        settings.value("showPfileWarning", true).toBool();
+
+    ui->showDebug           ->setChecked(       settings.value("showDebug" , true).toBool());
+    ui->programmerComboBox  ->setCurrentText(   settings.value("programmer", "atmelice").toString());
+    ui->interfaceComboBox   ->setCurrentText(   settings.value("interface" , "UPDI").toString());
+    ui->targetComboBox      ->setCurrentText(   settings.value("target"    , "AVR128DB48").toString());
+    ui->pBootEdit           ->setText(          settings.value("bootDir"   , QStandardPaths::locate(QStandardPaths::DesktopLocation, "")).toString());
+    ui->pAppEdit            ->setText(          settings.value("appDir"    , QStandardPaths::locate(QStandardPaths::DesktopLocation, "")).toString());
+
+    DEFAULT_BOOT_DIR = settings.value("bootDir").toString();
+    DEFAULT_APP_DIR  = settings.value("appDir" ).toString();
 
     ui->commandOutput->setVisible(ui->showDebug->isChecked());
 
@@ -145,14 +155,19 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *)
 {
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                       "RuggedScience", "atprogram-gui");
+    QSettings settings(QSettings::IniFormat,
+                       QSettings::UserScope,
+                       "RuggedScience",
+                       "atprogram-gui");
+
     settings.setValue("geometry", this->saveGeometry());
     settings.setValue("showPfileWarning", m_showPfileWarning);
     settings.setValue("showDebug", ui->showDebug->isChecked());
     settings.setValue("programmer", ui->programmerComboBox->currentText());
     settings.setValue("interface", ui->interfaceComboBox->currentText());
     settings.setValue("target", ui->targetComboBox->currentText());
+    settings.setValue("bootDir", ui->pBootEdit->text());
+    settings.setValue("appDir", ui->pAppEdit->text());
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
@@ -278,8 +293,10 @@ void MainWindow::on_eepromBrowse_clicked()
 
 void MainWindow::on_pBootBrowse_clicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
-                                                    QString(), "ELF (*.elf)");
+    QString fileName = QFileDialog::getOpenFileName( this,
+                                                     "Open File",
+                                                     DEFAULT_BOOT_DIR,
+                                                     "ELF (*.elf)");
     if (!fileName.isEmpty())
     {
         ui->pBootEdit->setText(fileName);
@@ -289,8 +306,10 @@ void MainWindow::on_pBootBrowse_clicked()
 
 void MainWindow::on_pAppBrowse_clicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open File",
-                                                    QString(), "ELF (*.elf)");
+    QString fileName = QFileDialog::getOpenFileName( this,
+                                                     "Open File",
+                                                     DEFAULT_APP_DIR,
+                                                     "ELF (*.elf)");
     if (!fileName.isEmpty())
     {
         ui->pAppEdit->setText(fileName);
@@ -460,25 +479,25 @@ void MainWindow::on_startButton_clicked()
                 args << "--verify"
                      << "-f" << ((bootFileInfo.isFile()) ? (ui->pBootEdit->text()) : (ui->pAppEdit->text()));
 
-                if (ui->pfileFuses->isChecked())
+                if (ui->pfileFuses->isEnabled() && (ui->pfileFuses->isChecked()))
                 {
                     args << "-fs";
                     warn = false;
                 }
 
-                if (ui->pfileFlash->isChecked())
+                if (ui->pfileFlash->isEnabled() && ui->pfileFlash->isChecked())
                 {
                     args << "-fl";
                     warn = false;
                 }
 
-                if (ui->pfileEeprom->isChecked())
+                if (ui->pfileEeprom->isEnabled() && ui->pfileEeprom->isChecked())
                 {
                     args << "-ee";
                     warn = false;
                 }
 
-                if (ui->plockDevice->isChecked())
+                if (ui->plockDevice->isEnabled() && ui->plockDevice->isChecked())
                 {
                     //args << "-lb --values A33A3AA3";
                     args << "-lb";
