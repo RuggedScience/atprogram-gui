@@ -199,17 +199,79 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QCheckBox" name="plockDevice">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="text">
+             <string>Lock Device</string>
+            </property>
+            <property name="checkable">
+             <bool>true</bool>
+            </property>
+            <property name="checked">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>
-         <widget class="QLineEdit" name="pfileEdit"/>
-        </item>
-        <item>
-         <widget class="QPushButton" name="pfileBrowse">
-          <property name="text">
-           <string>Browse</string>
-          </property>
-         </widget>
+         <layout class="QVBoxLayout" name="verticalLayout_3">
+          <item>
+           <widget class="QFrame" name="horizontalFrame_2">
+            <layout class="QHBoxLayout" name="horizontalLayout_7">
+             <item>
+              <widget class="QLabel" name="labelBootCode">
+               <property name="text">
+                <string>Bootloader</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="pBootEdit"/>
+             </item>
+             <item>
+              <widget class="QPushButton" name="pBootBrowse">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QFrame" name="horizontalFrame">
+            <layout class="QHBoxLayout" name="horizontalLayout_2">
+             <item>
+              <widget class="QLabel" name="labelApp">
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                 <horstretch>0</horstretch>
+                 <verstretch>0</verstretch>
+                </sizepolicy>
+               </property>
+               <property name="text">
+                <string>Application</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="pAppEdit"/>
+             </item>
+             <item>
+              <widget class="QPushButton" name="pAppBrowse">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
         </item>
        </layout>
       </widget>
@@ -229,7 +291,6 @@
           <property name="font">
            <font>
             <pointsize>8</pointsize>
-            <weight>50</weight>
             <bold>false</bold>
            </font>
           </property>
@@ -356,7 +417,6 @@
           <property name="font">
            <font>
             <pointsize>8</pointsize>
-            <weight>50</weight>
             <bold>false</bold>
            </font>
           </property>
@@ -398,7 +458,6 @@
           <property name="font">
            <font>
             <pointsize>8</pointsize>
-            <weight>50</weight>
             <bold>false</bold>
            </font>
           </property>

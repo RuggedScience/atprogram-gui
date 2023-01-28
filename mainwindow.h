@@ -33,10 +33,11 @@ private slots:
     void on_processFinished(int exitCode);
     void on_flashBrowse_clicked();
     void on_eepromBrowse_clicked();
-    void on_pfileBrowse_clicked();
-    void on_pfileEdit_editingFinished();
+    void on_pfileEdit_editingFinished(const QString& filePath);
     void on_startButton_clicked();
     void on_showDebug_toggled(bool checked);
+    void on_pAppBrowse_clicked();
+    void on_pBootBrowse_clicked();
 
 private:
     Ui::MainWindow *ui;
